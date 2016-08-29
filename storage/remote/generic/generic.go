@@ -14,6 +14,7 @@
 package generic
 
 import (
+	"log"
 	"time"
 
 	"golang.org/x/net/context"
@@ -22,37 +23,43 @@ import (
 	"github.com/prometheus/common/model"
 )
 
-// Client allows sending batches of Prometheus samples to a http endpoint.
+// Client allows sending batches of Prometheus samples to an HTTP endpoint.
 type Client struct {
-	conn    *grpc.ClientConn
+	client  GenericWriteClient
 	timeout time.Duration
 }
 
 // NewClient creates a new Client.
 func NewClient(address string, timeout time.Duration) *Client {
 	// TODO: Do something with this error.
-	conn, _ := grpc.Dial(address, grpc.WithInsecure())
+	conn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithTimeout(timeout))
+	if err != nil {
+		// grpc.Dial() returns immediately and doesn't error when the server is
+		// unreachable when not passing in the WithBlock() option. The client then
+		// will continuously try to (re)establish the connection in the background.
+		// So it seems ok to die here on startup if there is a different kind of error
+		// returned.
+		log.Fatalln("Error creating gRPC client connection:", err)
+	}
 	return &Client{
-		conn:    conn,
 		timeout: timeout,
+		client:  NewGenericWriteClient(conn),
 	}
 }
 
-// Store sends a batch of samples to the http endpoint.
+// Store sends a batch of samples to the HTTP endpoint.
 func (c *Client) Store(samples model.Samples) error {
-	req := &GenericWriteRequest{}
+	req := &GenericWriteRequest{
+		Timeseries: make([]*TimeSeries, 0, len(samples)),
+	}
 	for _, s := range samples {
-		ts := &TimeSeries{
-			Name: string(s.Metric[model.MetricNameLabel]),
-		}
+		ts := &TimeSeries{}
 		for k, v := range s.Metric {
-			if k != model.MetricNameLabel {
-				ts.Labels = append(ts.Labels,
-					&LabelPair{
-						Name:  string(k),
-						Value: string(v),
-					})
-			}
+			ts.Labels = append(ts.Labels,
+				&LabelPair{
+					Name:  string(k),
+					Value: string(v),
+				})
 		}
 		ts.Samples = []*Sample{
 			&Sample{
@@ -62,16 +69,15 @@ func (c *Client) Store(samples model.Samples) error {
 		}
 		req.Timeseries = append(req.Timeseries, ts)
 	}
-	client := NewGenericWriteClient(c.conn)
 	ctxt, _ := context.WithTimeout(context.Background(), c.timeout)
-	_, err := client.Write(ctxt, req)
+	_, err := c.client.Write(ctxt, req)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// Name identifies the client as a genric client.
+// Name identifies the client as a generic client.
 func (c Client) Name() string {
 	return "generic"
 }

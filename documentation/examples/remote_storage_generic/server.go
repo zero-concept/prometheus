@@ -21,6 +21,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/storage/remote/generic"
 )
 
@@ -28,11 +29,11 @@ type server struct{}
 
 func (server *server) Write(ctx context.Context, req *generic.GenericWriteRequest) (*generic.GenericWriteResponse, error) {
 	for _, ts := range req.Timeseries {
-		fmt.Printf("%s", ts.Name)
+		m := make(model.Metric, len(ts.Labels))
 		for _, l := range ts.Labels {
-			fmt.Printf(" %s=%s", l.Name, l.Value)
+			m[model.LabelName(l.Name)] = model.LabelValue(l.Value)
 		}
-		fmt.Printf("\n")
+		fmt.Println(m)
 
 		for _, s := range ts.Samples {
 			fmt.Printf("  %f %d\n", s.Value, s.TimestampMs)
@@ -45,7 +46,7 @@ func (server *server) Write(ctx context.Context, req *generic.GenericWriteReques
 func main() {
 	lis, err := net.Listen("tcp", ":1234")
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatalf("Failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
 	generic.RegisterGenericWriteServer(s, &server{})
